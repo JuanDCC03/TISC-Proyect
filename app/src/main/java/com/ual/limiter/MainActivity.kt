@@ -12,16 +12,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.ual.limiter.shizuku.ShizukuManager
-import com.ual.limiter.IUALUserService
-import com.ual.limiter.IUALServiceCallback
+
 
 class MainActivity : ComponentActivity() {
 
-    private val TAG = "MainActivity"
+    private val tag = "MainActivity"
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState: Bundle?)
-        Log.d(TAG, "MainActivity onCreate")
+        super.onCreate(savedInstanceState)
+        Log.d(tag, "MainActivity onCreate")
 
         setContent {
             MaterialTheme {
@@ -95,7 +94,7 @@ fun ShizukuTestScreen() {
     ) {
         Text(
             text = "UAL Shizuku Test Utility",
-            style = MaterialTheme.styleScheme?.let { MaterialTheme.typography.headlineMedium } ?: MaterialTheme.typography.titleLarge
+            style = MaterialTheme.typography.headlineMedium
         )
         
         Spacer(modifier = Modifier.height(24.dp))

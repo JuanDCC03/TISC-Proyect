@@ -2,7 +2,6 @@ package com.ual.limiter.shizuku
 
 import android.media.audiofx.DynamicsProcessing
 import android.media.audiofx.Visualizer
-import android.os.IBinder
 import android.util.Log
 import com.ual.limiter.IUALServiceCallback
 import com.ual.limiter.IUALUserService
@@ -218,7 +217,7 @@ class UALUserService : IUALUserService.Stub() {
             for (channel in 0..1) {
                 val currentLimiter = dp.getLimiterByChannelIndex(channel)
                 currentLimiter.postGain = finalMakeupGain
-                dp.setLimiter(channel, currentLimiter)
+                dp.setLimiterByChannelIndex(channel, currentLimiter)
             }
         } catch (e: Exception) {
             // Silenciar excepciones por actualización rápida
@@ -227,7 +226,7 @@ class UALUserService : IUALUserService.Stub() {
 
     private fun startDosimetryLoop() {
         // Monitoreo periódico del dosímetro cada 1 segundo
-        scheduler.scheduleAtFixedRate({
+        scheduler.scheduleWithFixedDelay({
             if (isDosimeterEnabled) {
                 runDosimetryCalculation()
             }
@@ -235,7 +234,7 @@ class UALUserService : IUALUserService.Stub() {
     }
 
     private fun runDosimetryCalculation() {
-        val dp = dynamicsProcessing ?: return
+        if (dynamicsProcessing == null) return
         
         // Innovación 3: Dosímetro de Fatiga Auditiva
         // Estimamos la dosis acumulada usando un modelo simplificado basado en el postGain y el threshold efectivo.
