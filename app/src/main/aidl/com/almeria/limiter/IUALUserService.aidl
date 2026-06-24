@@ -1,6 +1,6 @@
-package com.ual.limiter;
+package com.almeria.limiter;
 
-import com.ual.limiter.IUALServiceCallback;
+import com.almeria.limiter.IUALServiceCallback;
 
 interface IUALUserService {
     void startEngine();
@@ -8,4 +8,5 @@ interface IUALUserService {
     void updateParameters(float threshold, float attack, float release, float makeupGain, boolean adaptiveGain, boolean dosimeterEnabled);
     void registerCallback(IUALServiceCallback callback);
     void exit();
+    void onFftUpdated(in float[] frequencies);
 }

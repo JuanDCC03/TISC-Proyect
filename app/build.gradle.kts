@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.ual.limiter"
+    namespace = "com.almeria.limiter"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.ual.limiter"
+        applicationId = "com.almeria.limiter"
         minSdk = 28 // DynamicsProcessing was introduced in API 28 (Android 9)
         targetSdk = 34
         versionCode = 1

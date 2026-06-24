@@ -1,11 +1,11 @@
-package com.ual.limiter.shizuku
+package com.almeria.limiter.shizuku
 
 import android.content.ComponentName
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.IBinder
 import android.util.Log
-import com.ual.limiter.IUALUserService
+import com.almeria.limiter.IUALUserService
 import rikka.shizuku.Shizuku
 
 object ShizukuManager {
@@ -143,7 +143,7 @@ object ShizukuManager {
         
         // Configuramos argumentos del servicio de Shizuku
         val serviceArgs = Shizuku.UserServiceArgs(
-            ComponentName("com.ual.limiter", UALUserService::class.java.name)
+            ComponentName("com.almeria.limiter", UALUserService::class.java.name)
         ).apply {
             processNameSuffix("ual_service")
             debuggable(true) // Habilitar debug
