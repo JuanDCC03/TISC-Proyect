@@ -1,7 +1,9 @@
 package com.almeria.limiter.shizuku
 
+import android.content.Context
 import android.media.audiofx.DynamicsProcessing
 import android.media.audiofx.Visualizer
+import android.media.AudioManager
 import android.util.Log
 import com.almeria.limiter.IUALServiceCallback
 import com.almeria.limiter.IUALUserService
@@ -13,7 +15,26 @@ import kotlin.math.sqrt
 
 class UALUserService : IUALUserService.Stub() {
 
+    private lateinit var audioManager: AudioManager
+
     private val TAG = "UALUserService"
+
+    private fun calcularThresholdSeguro(): Float {
+        // 1. Obtener el volumen actual de archivos multimedia (Stream Music)
+        val volActual = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+        val volMax = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+
+        // 2. Calcular la proporción del volumen (0.0 a 1.0)
+        val ratioVolumen = volActual.toFloat() / volMax.toFloat()
+
+        // 3. Regla matemática adaptativa:
+        // A mayor volumen físico, menor debe ser el techo digital (Threshold) para proteger el oído.
+        // Si el volumen está al máximo (ratio = 1.0), el techo cae a -24 dBFS.
+        // Si el volumen está al mínimo (ratio = 0.0), el techo se relaja a -6 dBFS.
+        val thresholdBase = -6f - (ratioVolumen * 18f)
+
+        return thresholdBase
+    }
 
     // Componentes del motor de audio nativo
     private var dynamicsProcessing: DynamicsProcessing? = null
@@ -46,6 +67,12 @@ class UALUserService : IUALUserService.Stub() {
     override fun startEngine() {
         Log.i(TAG, "Iniciando Dynamics Engine y Visualizer en la Sesión 0...")
         try {
+            // Usamos reflexión para acceder a AppGlobals (API oculta) y obtener un Contexto válido en el proceso Shizuku
+            val context = Class.forName("android.app.AppGlobals")
+                .getMethod("getInitialApplication")
+                .invoke(null) as Context
+            audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
             initDynamicsProcessing()
             initVisualizer()
         } catch (e: Exception) {
@@ -75,7 +102,18 @@ class UALUserService : IUALUserService.Stub() {
         isDosimeterEnabled = dosimeterEnabled
 
         Log.d(TAG, "Parámetros actualizados: Thr=$threshold, Att=$attack, Rel=$release, MakeUp=$makeupGain, Adaptive=$adaptiveGain, Dosimeter=$dosimeterEnabled")
-        applyDynamicsConfig()
+
+        // CONTROL DE BYPASS: Si el limitador está "encendido" en la UI, aplicamos y habilitamos.
+        // Poden usar la variable 'dosimeterEnabled' o añadir una nueva variable 'isLimiterEnabled' al AIDL.
+        // Como prueba rápida, si 'dosimeterEnabled' está en true, encendemos el chip; si no, lo apagamos:
+        dynamicsProcessing?.let { dp ->
+            dp.enabled = dosimeterEnabled // Desactiva por completo el procesamiento de hardware si es false
+            if (dp.enabled) {
+                applyDynamicsConfig()
+            } else {
+                Log.d(TAG, "FILTER BYPASS: El procesador de audio ha sido desactivado para comparación.")
+            }
+        }
     }
 
     override fun registerCallback(cb: IUALServiceCallback?) {
@@ -99,13 +137,11 @@ class UALUserService : IUALUserService.Stub() {
     }
 
     private fun initDynamicsProcessing() {
-        // Configuramos DynamicsProcessing con 2 canales (Stereo)
-        // Variante enfocada en resolución temporal para limitar picos rápidos
         val configBuilder = DynamicsProcessing.Config.Builder(
-            DynamicsProcessing.VARIANT_FAVOR_FREQUENCY_RESOLUTION,
+            DynamicsProcessing.VARIANT_FAVOR_TIME_RESOLUTION, // <-- Resolución temporal ultra-rápida
             2,
             false, 0, // preEQ desactivado
-            false, 0, // MBC desactivado (procesamos banda completa con el Limiter)
+            false, 0, // MBC desactivado
             false, 0, // postEQ desactivado
             true      // Limiter activado
         )
@@ -117,30 +153,33 @@ class UALUserService : IUALUserService.Stub() {
 
         applyDynamicsConfig()
         dynamicsProcessing?.enabled = true
-        Log.d(TAG, "DynamicsProcessing creado y habilitado en la Sesión 0")
+        Log.d(TAG, "DynamicsProcessing creado (Modo Tiempo Real Bruto) en la Sesión 0")
     }
 
     private fun applyDynamicsConfig() {
         val dp = dynamicsProcessing ?: return
 
-        // Calculamos el umbral efectivo aplicando la atenuación protectora del dosímetro
-        val effectiveThreshold = currentThresholdDb - dosimetryThresholdAttenuation
+        // 1. Calculamos el umbral adaptativo inteligente según el volumen físico actual del cel
+        val umbralBaseInmutable = calcularThresholdSeguro()
 
-        // Construimos la etapa de limitación para canal estéreo
+        // 2. Le restamos la atenuación acumulada del dosímetro si el usuario lleva mucho tiempo expuesto
+        val effectiveThreshold = umbralBaseInmutable - dosimetryThresholdAttenuation
+
+        // 3. Construimos la etapa de limitación para canal estéreo con efecto Muro Estricto (Ratio 50.0f)
         val limiterConfig = DynamicsProcessing.Limiter(
             true,               // inUse
             true,               // enabled
             0,                  // linkGroup
             currentAttackMs,    // attackTime (ms)
             currentReleaseMs,   // releaseTime (ms)
-            10.0f,              // ratio (compresión alta para actuar como limitador)
-            effectiveThreshold, // threshold (dB)
+            50.0f,              // Ratio ultra-alto: Ahora actúa como un Brickwall Limiter real
+            effectiveThreshold, // Umbral adaptativo corregido (dB)
             currentMakeupGainDb // postGain (makeup gain base)
         )
 
         try {
             dp.setLimiterAllChannelsTo(limiterConfig)
-            Log.d(TAG, "Configuración del Limitador aplicada: LimiterThreshold=$effectiveThreshold dB")
+            Log.d(TAG, "Configuración del Limitador aplicada con Ratio de Muro: LimiterThreshold=$effectiveThreshold dB")
         } catch (e: Exception) {
             Log.e(TAG, "Error al configurar los canales del limitador: ${e.message}")
         }

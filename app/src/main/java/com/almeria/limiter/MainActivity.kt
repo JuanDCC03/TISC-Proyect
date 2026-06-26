@@ -63,6 +63,7 @@ fun ShizukuTestScreen() {
     var statusText by remember { mutableStateOf("Desconectado") }
     var rmsValue by remember { mutableFloatStateOf(-100f) }
     var doseValue by remember { mutableFloatStateOf(0f) }
+    var isFilterEnabled by remember { mutableStateOf(true) }
 
     // Umbral de referencia estático para la simulación del limitador (-12 dBFS)
     val sliderThresholdDb = -12f
@@ -89,9 +90,21 @@ fun ShizukuTestScreen() {
             override fun onConnected(service: IUALUserService) {
                 isBound = true
                 statusText = "Conectado al Servicio Elevado"
+                // Modifica tu bloque try dentro de onConnected:
                 try {
                     service.registerCallback(telemetryCallback)
                     service.startEngine()
+
+                    // ENVIAR PARÁMETROS INICIALES AL ARRANCAR (Filtro activo)
+                    service.updateParameters(
+                        sliderThresholdDb, // -12f
+                        5f,                // attack
+                        50f,               // release
+                        0f,                // makeupGain
+                        false,             // adaptiveGain
+                        isFilterEnabled    // <--- Pasamos el estado inicial (true)
+                    )
+
                     statusText = "Motor Activo en Sesión 0"
                 } catch (e: Exception) {
                     Log.e("MainActivity", "Error al iniciar motor: ${e.message}")
@@ -178,9 +191,51 @@ fun ShizukuTestScreen() {
             Text(if (isBound) "Desconectar del Servicio" else "Conectar y Arrancar Motor")
         }
 
-        // --- SECCIÓN DE TELEMETRÍA AVANZADA Y CANVAS ---
+        // SECCIÓN DE TELEMETRÍA AVANZADA Y CANVAS
         if (isBound) {
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // --- NUEVO COMPONENTE: SWITCH DE BYPASS DE AUDIO ---
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                        .fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (isFilterEnabled) "Filtro Muro: ACTIVO" else "Filtro Muro: BYPASS",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = if (isFilterEnabled) Color(0xFF2196F3) else Color.Gray
+                    )
+                    Switch(
+                        checked = isFilterEnabled,
+                        onCheckedChange = { checked ->
+                            isFilterEnabled = checked
+                            // Notificamos al backend en Shizuku en tiempo real
+                            try {
+                                val service = ShizukuManager.getService()
+                                service?.updateParameters(
+                                    sliderThresholdDb, // -12f
+                                    5f,                // attack
+                                    50f,               // release
+                                    0f,                // makeupGain
+                                    false,             // adaptiveGain
+                                    checked            // <--- 'checked' apaga o prende el DynamicsProcessing nativo
+                                )
+                            } catch (e: Exception) {
+                                Log.e("MainActivity", "Error al enviar Bypass: ${e.message}")
+                            }
+                        }
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
 
             // Render de los Vúmetros comparativos (Original vs Modulado) y Espectrograma FFT
             AudioVisualizerSection(rmsValue = rmsValue, currentThreshold = sliderThresholdDb)
