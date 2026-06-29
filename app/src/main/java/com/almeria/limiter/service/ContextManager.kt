@@ -15,7 +15,7 @@ object ContextManager {
 
     /**
      * Updates the active foreground package name and automatically maps it 
-     * to a preset UAL/UNAL Audio Profile (Innovation 2).
+     * to a preset UNAL Audio Profile (Innovation 2).
      */
     fun updateForegroundPackage(packageName: String?) {
         if (packageName == _foregroundPackage.value) return

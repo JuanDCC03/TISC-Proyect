@@ -189,7 +189,7 @@ fun UNALHomeScreen(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
-            text = "UNAL Audio Limiter (UAL)",
+            text = "UNAL Audio Limiter",
             style = MaterialTheme.typography.headlineMedium
         )
         
