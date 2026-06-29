@@ -5,19 +5,19 @@ import android.media.audiofx.DynamicsProcessing
 import android.media.audiofx.Visualizer
 import android.media.AudioManager
 import android.util.Log
-import com.almeria.limiter.IUALServiceCallback
-import com.almeria.limiter.IUALUserService
+import com.almeria.limiter.IUNALServiceCallback
+import com.almeria.limiter.IUNALUserService
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 import kotlin.math.log10
 import kotlin.math.sqrt
 
-class UALUserService : IUALUserService.Stub() {
+class UNALUserService : IUNALUserService.Stub() {
 
     private lateinit var audioManager: AudioManager
 
-    private val TAG = "UALUserService"
+    private val TAG = "UNALUserService"
 
     private fun calcularThresholdSeguro(): Float {
         // 1. Obtener el volumen actual de archivos multimedia (Stream Music)
@@ -41,7 +41,7 @@ class UALUserService : IUALUserService.Stub() {
     private var visualizer: Visualizer? = null
 
     // Callback para notificar la telemetría al proceso de la UI
-    private var callback: IUALServiceCallback? = null
+    private var callback: IUNALServiceCallback? = null
 
     // Planificador para tareas periódicas (Cálculo del dosímetro)
     private val scheduler: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
@@ -60,7 +60,7 @@ class UALUserService : IUALUserService.Stub() {
     private var dosimetryThresholdAttenuation = 0f // Atenuación asintótica del umbral por protección
 
     init {
-        Log.d(TAG, "UALUserService instanciado con privilegios: UID=${android.os.Process.myUid()}")
+        Log.d(TAG, "UNALUserService instanciado con privilegios: UID=${android.os.Process.myUid()}")
         startDosimetryLoop()
     }
 
@@ -116,13 +116,13 @@ class UALUserService : IUALUserService.Stub() {
         }
     }
 
-    override fun registerCallback(cb: IUALServiceCallback?) {
+    override fun registerCallback(cb: IUNALServiceCallback?) {
         this.callback = cb
         Log.d(TAG, "Callback registrado para telemetría")
     }
 
     override fun exit() {
-        Log.i(TAG, "Cerrando proceso de servicio de usuario UAL...")
+        Log.i(TAG, "Cerrando proceso de servicio de usuario UNAL...")
         releaseResources()
         scheduler.shutdownNow()
         System.exit(0)

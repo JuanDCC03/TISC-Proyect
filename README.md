@@ -1,4 +1,4 @@
-# Universal Audio Limiter (UAL) - Android
+# Universal National Audio Limiter (UNAL) - Android
 
 Este proyecto es un limitador de audio dinámico y universal para Android. Permite interceptar la sesión de audio global (Sesión 0) a nivel de sistema utilizando privilegios elevados de Shell a través de la API de **Shizuku** (`android.permission.DUMP`), aplicando un filtro a través de la clase nativa `DynamicsProcessing`.
 
@@ -30,14 +30,14 @@ La aplicación oficial de **Shizuku** debe estar instalada y ejecutándose en el
 
 ### 3. Compilar e Instalar
 1. Conecta el dispositivo y presiona el botón **Run** en Android Studio.
-2. Abre la app **UAL Limiter** instalada.
+2. Abre la app **UNAL Limiter** instalada.
 
 ### 4. Ejecución del Test en la App
 1. **Verificar / Solicitar Permiso**: Haz clic en el botón **"Verificar / Solicitar Permiso Shizuku"**. Se abrirá una ventana emergente de Shizuku solicitando acceso para la app. Acepta el permiso.
 2. El indicador de **Permiso de API** en la aplicación cambiará a **Concedido** (verde).
 3. **Arrancar el Motor**: Haz clic en **"Conectar y Arrancar Motor"**. 
-   * Esto vincula el servicio de usuario de Shizuku (`UALUserService`), el cual corre en segundo plano como `shell`.
+   * Esto vincula el servicio de usuario de Shizuku (`UNALUserService`), el cual corre en segundo plano como `shell`.
    * El servicio inicializa la clase nativa `DynamicsProcessing` y el lector `Visualizer` en la sesión `0` global.
    * El estado del Binder en la interfaz cambiará a **"Motor Activo en Sesión 0"**.
-4. **Monitorear Audio**: Sal de la aplicación y reproduce cualquier audio en otra app (como YouTube o Spotify). Al regresar a la utilidad de pruebas de UAL Limiter, verás fluctuar en tiempo real los valores de **RMS de Salida (dBFS)** y la estimación del **Dosímetro de Fatiga**, confirmando el éxito del procesamiento del audio y la comunicación IPC.
-5. Puedes observar los logs del proceso Shizuku en la consola Logcat de Android Studio filtrando por `UALUserService` o `ShizukuManager`.
+4. **Monitorear Audio**: Sal de la aplicación y reproduce cualquier audio en otra app (como YouTube o Spotify). Al regresar a la utilidad de pruebas de UNAL Limiter, verás fluctuar en tiempo real los valores de **RMS de Salida (dBFS)** y la estimación del **Dosímetro de Fatiga**, confirmando el éxito del procesamiento del audio y la comunicación IPC.
+5. Puedes observar los logs del proceso Shizuku en la consola Logcat de Android Studio filtrando por `UNALUserService` o `ShizukuManager`.

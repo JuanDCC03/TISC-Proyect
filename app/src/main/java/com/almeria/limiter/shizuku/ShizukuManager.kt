@@ -5,7 +5,7 @@ import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.IBinder
 import android.util.Log
-import com.almeria.limiter.IUALUserService
+import com.almeria.limiter.IUNALUserService
 import rikka.shizuku.Shizuku
 
 object ShizukuManager {
@@ -13,12 +13,12 @@ object ShizukuManager {
     private const val TAG = "ShizukuManager"
     private const val SHIZUKU_PERMISSION_CODE = 9991
 
-    // Binder reference to UALUserService
-    private var ualUserService: IUALUserService? = null
+    // Binder reference to UNALUserService
+    private var unalUserService: IUNALUserService? = null
     
-    // Connection callbacks for clients (e.g. UALForegroundService)
+    // Connection callbacks for clients (e.g. UNALForegroundService)
     interface ConnectionCallback {
-        fun onConnected(service: IUALUserService)
+        fun onConnected(service: IUNALUserService)
         fun onDisconnected()
     }
 
@@ -27,18 +27,18 @@ object ShizukuManager {
     // ServiceConnection for Shizuku UserService
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
-            Log.i(TAG, "Conexión Binder exitosa con UALUserService")
+            Log.i(TAG, "Conexión Binder exitosa con UNALUserService")
             if (service != null && service.pingBinder()) {
-                ualUserService = IUALUserService.Stub.asInterface(service)
-                ualUserService?.let { clientCallback?.onConnected(it) }
+                unalUserService = IUNALUserService.Stub.asInterface(service)
+                unalUserService?.let { clientCallback?.onConnected(it) }
             } else {
                 Log.e(TAG, "El Binder recibido no es válido o está muerto")
             }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
-            Log.w(TAG, "Servicio UALUserService desconectado abruptamente")
-            ualUserService = null
+            Log.w(TAG, "Servicio UNALUserService desconectado abruptamente")
+            unalUserService = null
             clientCallback?.onDisconnected()
         }
     }
@@ -49,7 +49,7 @@ object ShizukuManager {
 
     private val binderDeadListener = Shizuku.OnBinderDeadListener {
         Log.w(TAG, "El Binder de Shizuku ha muerto")
-        ualUserService = null
+        unalUserService = null
         clientCallback?.onDisconnected()
     }
 
@@ -116,7 +116,7 @@ object ShizukuManager {
     }
 
     /**
-     * Se conecta al UALUserService (que corre con privilegios elevados) usando Shizuku.
+     * Se conecta al UNALUserService (que corre con privilegios elevados) usando Shizuku.
      */
     fun bindService(callback: ConnectionCallback) {
         this.clientCallback = callback
@@ -133,9 +133,9 @@ object ShizukuManager {
             return
         }
 
-        if (ualUserService != null) {
-            Log.i(TAG, "Ya existe una conexión activa a UALUserService")
-            callback.onConnected(ualUserService!!)
+        if (unalUserService != null) {
+            Log.i(TAG, "Ya existe una conexión activa a UNALUserService")
+            callback.onConnected(unalUserService!!)
             return
         }
 
@@ -143,9 +143,9 @@ object ShizukuManager {
         
         // Configuramos argumentos del servicio de Shizuku
         val serviceArgs = Shizuku.UserServiceArgs(
-            ComponentName("com.almeria.limiter", UALUserService::class.java.name)
+            ComponentName("com.almeria.limiter", UNALUserService::class.java.name)
         ).apply {
-            processNameSuffix("ual_service")
+            processNameSuffix("unal_service")
             debuggable(true) // Habilitar debug
             version(1)
         }
@@ -162,15 +162,15 @@ object ShizukuManager {
      * Se desconecta del servicio de usuario y detiene el proceso Binder elevado.
      */
     fun unbindService() {
-        if (ualUserService != null) {
+        if (unalUserService != null) {
             Log.i(TAG, "Desvinculando y ordenando salida del servicio de usuario...")
             try {
                 // Ordenar al proceso Shizuku que finalice (System.exit) para no fugar recursos
-                ualUserService?.exit()
+                unalUserService?.exit()
             } catch (e: Exception) {
                 Log.e(TAG, "Error al llamar exit() en el servicio Binder: ${e.message}")
             }
-            ualUserService = null
+            unalUserService = null
         }
         clientCallback?.onDisconnected()
         clientCallback = null
@@ -179,5 +179,5 @@ object ShizukuManager {
     /**
      * Retorna la referencia activa del servicio Binder, si existe.
      */
-    fun getService(): IUALUserService? = ualUserService
+    fun getService(): IUNALUserService? = unalUserService
 }

@@ -70,7 +70,7 @@ fun ShizukuTestScreen() {
 
     // Callback que recibe los datos RMS en tiempo real desde el proceso de Shizuku
     val telemetryCallback = remember {
-        object : IUALServiceCallback.Stub() {
+        object : IUNALServiceCallback.Stub() {
             override fun onRmsUpdated(rmsDb: Float) {
                 rmsValue = rmsDb
             }
@@ -87,7 +87,7 @@ fun ShizukuTestScreen() {
 
     val connectionCallback = remember {
         object : ShizukuManager.ConnectionCallback {
-            override fun onConnected(service: IUALUserService) {
+            override fun onConnected(service: IUNALUserService) {
                 isBound = true
                 statusText = "Conectado al Servicio Elevado"
                 // Modifica tu bloque try dentro de onConnected:
@@ -129,7 +129,7 @@ fun ShizukuTestScreen() {
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = "UAL Shizuku Test Utility",
+            text = "UNAL Shizuku Test Utility",
             style = MaterialTheme.typography.headlineMedium
         )
 
@@ -152,7 +152,7 @@ fun ShizukuTestScreen() {
         Spacer(modifier = Modifier.height(12.dp))
 
         StatusCard(
-            title = "Estado Binder UAL",
+            title = "Estado Binder UNAL",
             status = statusText,
             color = if (isBound) Color(0xFF4CAF50) else Color(0xFF757575)
         )

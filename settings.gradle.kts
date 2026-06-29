@@ -13,5 +13,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "UAL-Limiter"
+rootProject.name = "UNAL-Limiter"
 include(":app")

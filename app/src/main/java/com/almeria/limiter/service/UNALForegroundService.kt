@@ -9,7 +9,7 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 
-class UALForegroundService : Service() {
+class UNALForegroundService : Service() {
 
     private val CHANNEL_ID = "LimiterServiceChannel"
 
@@ -21,7 +21,7 @@ class UALForegroundService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // Creamos la notificación obligatoria
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Compresor UAL Activo")
+            .setContentTitle("Compresor UNAL Activo")
             .setContentText("Protegiendo tus oídos en segundo plano...")
             .setSmallIcon(android.R.drawable.ic_media_play) // Cambiar por un ícono propio luego
             .build()
@@ -41,7 +41,7 @@ class UALForegroundService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val serviceChannel = NotificationChannel(
                 CHANNEL_ID,
-                "Canal de Servicio de Compresión UAL",
+                "Canal de Servicio de Compresión UNAL",
                 NotificationManager.IMPORTANCE_LOW
             )
             val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
