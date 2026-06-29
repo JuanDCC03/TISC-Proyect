@@ -1,26 +1,47 @@
 package com.almeria.limiter.shizuku
 
+import android.content.Context
 import android.media.audiofx.DynamicsProcessing
 import android.media.audiofx.Visualizer
+import android.media.AudioManager
 import android.util.Log
-import com.almeria.limiter.IUALServiceCallback
-import com.almeria.limiter.IUALUserService
+import com.almeria.limiter.IUNALServiceCallback
+import com.almeria.limiter.IUNALUserService
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 import kotlin.math.log10
 import kotlin.math.sqrt
 
-class UALUserService : IUALUserService.Stub() {
+class UNALUserService : IUNALUserService.Stub() {
 
-    private val TAG = "UALUserService"
+    private lateinit var audioManager: AudioManager
+
+    private val TAG = "UNALUserService"
+
+    private fun calcularThresholdSeguro(): Float {
+        // 1. Obtener el volumen actual de archivos multimedia (Stream Music)
+        val volActual = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+        val volMax = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+
+        // 2. Calcular la proporción del volumen (0.0 a 1.0)
+        val ratioVolumen = volActual.toFloat() / volMax.toFloat()
+
+        // 3. Regla matemática adaptativa:
+        // A mayor volumen físico, menor debe ser el techo digital (Threshold) para proteger el oído.
+        // Si el volumen está al máximo (ratio = 1.0), el techo cae a -24 dBFS.
+        // Si el volumen está al mínimo (ratio = 0.0), el techo se relaja a -6 dBFS.
+        val thresholdBase = -6f - (ratioVolumen * 18f)
+
+        return thresholdBase
+    }
 
     // Componentes del motor de audio nativo
     private var dynamicsProcessing: DynamicsProcessing? = null
     private var visualizer: Visualizer? = null
 
     // Callback para notificar la telemetría al proceso de la UI
-    private var callback: IUALServiceCallback? = null
+    private var callback: IUNALServiceCallback? = null
 
     // Planificador para tareas periódicas (Cálculo del dosímetro)
     private val scheduler: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
@@ -33,19 +54,34 @@ class UALUserService : IUALUserService.Stub() {
     @Volatile private var isAdaptiveGainEnabled = false
     @Volatile private var isDosimeterEnabled = false
 
-    // Estado del Dosímetro
+    // Estado del Dosímetro y telemetría en tiempo real
     private var accumulatedDose = 0.0f
     private val maxDoseThreshold = 100.0f // Unidad arbitraria que representa el límite de exposición segura
     private var dosimetryThresholdAttenuation = 0f // Atenuación asintótica del umbral por protección
+    
+    @Volatile private var lastMeasuredRmsDb = -100f
+    @Volatile private var smoothedAdaptiveGain = 0f
+    @Volatile private var lastAppliedGain = 0f
+    @Volatile private var lastGainUpdateTimeMs = 0L
+    // Valores de Attack y Release con los que se construyó el DynamicsProcessing actual.
+    // Si cambian, hay que reconstruir el objeto nativo desde cero.
+    @Volatile private var lastBuiltAttackMs = -1f
+    @Volatile private var lastBuiltReleaseMs = -1f
 
     init {
-        Log.d(TAG, "UALUserService instanciado con privilegios: UID=${android.os.Process.myUid()}")
+        Log.d(TAG, "UNALUserService instanciado con privilegios: UID=${android.os.Process.myUid()}")
         startDosimetryLoop()
     }
 
     override fun startEngine() {
         Log.i(TAG, "Iniciando Dynamics Engine y Visualizer en la Sesión 0...")
         try {
+            // Usamos reflexión para acceder a AppGlobals (API oculta) y obtener un Contexto válido en el proceso Shizuku
+            val context = Class.forName("android.app.AppGlobals")
+                .getMethod("getInitialApplication")
+                .invoke(null) as Context
+            audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
             initDynamicsProcessing()
             initVisualizer()
         } catch (e: Exception) {
@@ -75,16 +111,20 @@ class UALUserService : IUALUserService.Stub() {
         isDosimeterEnabled = dosimeterEnabled
 
         Log.d(TAG, "Parámetros actualizados: Thr=$threshold, Att=$attack, Rel=$release, MakeUp=$makeupGain, Adaptive=$adaptiveGain, Dosimeter=$dosimeterEnabled")
+
+        // El limitador siempre debe estar activo mientras el servicio esté corriendo.
+        // El dosímetro es solo un módulo de medición, no controla el bypass del limitador.
+        dynamicsProcessing?.enabled = true
         applyDynamicsConfig()
     }
 
-    override fun registerCallback(cb: IUALServiceCallback?) {
+    override fun registerCallback(cb: IUNALServiceCallback?) {
         this.callback = cb
         Log.d(TAG, "Callback registrado para telemetría")
     }
 
     override fun exit() {
-        Log.i(TAG, "Cerrando proceso de servicio de usuario UAL...")
+        Log.i(TAG, "Cerrando proceso de servicio de usuario UNAL...")
         releaseResources()
         scheduler.shutdownNow()
         System.exit(0)
@@ -99,50 +139,69 @@ class UALUserService : IUALUserService.Stub() {
     }
 
     private fun initDynamicsProcessing() {
-        // Configuramos DynamicsProcessing con 2 canales (Stereo)
-        // Variante enfocada en resolución temporal para limitar picos rápidos
         val configBuilder = DynamicsProcessing.Config.Builder(
-            DynamicsProcessing.VARIANT_FAVOR_FREQUENCY_RESOLUTION,
+            DynamicsProcessing.VARIANT_FAVOR_TIME_RESOLUTION,
             2,
             false, 0, // preEQ desactivado
-            false, 0, // MBC desactivado (procesamos banda completa con el Limiter)
+            false, 0, // MBC desactivado
             false, 0, // postEQ desactivado
             true      // Limiter activado
         )
-
         val config = configBuilder.build()
-
-        // Asignamos a la sesión 0 (global del sistema) y prioridad 1000
         dynamicsProcessing = DynamicsProcessing(1000, 0, config)
 
-        applyDynamicsConfig()
+        // Registrar los valores de Attack y Release con los que se construyó este objeto.
+        // Si el usuario cambia alguno de estos dos, habrá que reconstruir.
+        lastBuiltAttackMs = currentAttackMs
+        lastBuiltReleaseMs = currentReleaseMs
+
+        applyLimiterParams()
         dynamicsProcessing?.enabled = true
-        Log.d(TAG, "DynamicsProcessing creado y habilitado en la Sesión 0")
+        Log.d(TAG, "DynamicsProcessing construido en Sesión 0: Attack=${currentAttackMs}ms, Release=${currentReleaseMs}ms")
     }
 
     private fun applyDynamicsConfig() {
+        // Attack y Release se incrustan en la configuración nativa del objeto DynamicsProcessing
+        // en el momento de su construcción. Si cambian, hay que destruir y reconstruir el motor.
+        if (currentAttackMs != lastBuiltAttackMs || currentReleaseMs != lastBuiltReleaseMs) {
+            Log.d(TAG, "Attack/Release modificado (${lastBuiltAttackMs}→${currentAttackMs}ms / ${lastBuiltReleaseMs}→${currentReleaseMs}ms). Reconstruyendo motor DSP...")
+            try {
+                dynamicsProcessing?.enabled = false
+                dynamicsProcessing?.release()
+                dynamicsProcessing = null
+            } catch (e: Exception) {
+                Log.e(TAG, "Error liberando DP antiguo: ${e.message}")
+            }
+            initDynamicsProcessing() // Reconstruye con los valores nuevos y llama applyLimiterParams()
+            return
+        }
+        // Threshold y Makeup Gain sí se pueden cambiar en caliente sin reconstruir.
+        applyLimiterParams()
+    }
+
+    private fun applyLimiterParams() {
         val dp = dynamicsProcessing ?: return
 
-        // Calculamos el umbral efectivo aplicando la atenuación protectora del dosímetro
+        // Usar el Threshold del slider del usuario directamente.
+        // El dosímetro aplica atenuación adicional encima si detecta fatiga auditiva acumulada.
         val effectiveThreshold = currentThresholdDb - dosimetryThresholdAttenuation
 
-        // Construimos la etapa de limitación para canal estéreo
         val limiterConfig = DynamicsProcessing.Limiter(
             true,               // inUse
             true,               // enabled
             0,                  // linkGroup
             currentAttackMs,    // attackTime (ms)
             currentReleaseMs,   // releaseTime (ms)
-            10.0f,              // ratio (compresión alta para actuar como limitador)
-            effectiveThreshold, // threshold (dB)
+            50.0f,              // Ratio brickwall (muro estricto)
+            effectiveThreshold, // Umbral del slider + corrección por dosímetro
             currentMakeupGainDb // postGain (makeup gain base)
         )
 
         try {
             dp.setLimiterAllChannelsTo(limiterConfig)
-            Log.d(TAG, "Configuración del Limitador aplicada: LimiterThreshold=$effectiveThreshold dB")
+            Log.d(TAG, "Limitador aplicado: Thr=$effectiveThreshold dB, Att=${currentAttackMs}ms, Rel=${currentReleaseMs}ms, PostGain=${currentMakeupGainDb}dB")
         } catch (e: Exception) {
-            Log.e(TAG, "Error al configurar los canales del limitador: ${e.message}")
+            Log.e(TAG, "Error aplicando parámetros al limitador: ${e.message}")
         }
     }
 
@@ -195,6 +254,9 @@ class UALUserService : IUALUserService.Stub() {
 
         // Conversión a escala logarítmica dBFS (evitando log(0) con piso en -100dB)
         val rmsDb = if (rms > 1e-5f) 20f * log10(rms) else -100f
+        
+        // Guardar RMS real para la dosimetría en tiempo real
+        lastMeasuredRmsDb = rmsDb
 
         // Notificar el RMS actual en tiempo real a la interfaz gráfica por AIDL
         try {
@@ -206,6 +268,12 @@ class UALUserService : IUALUserService.Stub() {
         // Innovación 1: Adaptive Make-up Gain
         if (isAdaptiveGainEnabled) {
             applyAdaptiveGain(rmsDb)
+        } else {
+            // Si se desactiva la ganancia adaptativa, asegurarse de limpiar la atenuación
+            if (smoothedAdaptiveGain != 0f) {
+                smoothedAdaptiveGain = 0f
+                resetToDefaultMakeupGain()
+            }
         }
     }
 
@@ -222,23 +290,52 @@ class UALUserService : IUALUserService.Stub() {
         val targetSilentThreshold = -30f
         val maxGainCompensation = 12f // Máximo 12dB de amplificación para evitar amplificar ruido blanco
 
-        val adaptiveGain = if (rmsDb < targetSilentThreshold && rmsDb > -60f) {
+        // Calcular ganancia adaptativa deseada
+        val targetAdaptiveGain = if (rmsDb < targetSilentThreshold && rmsDb > -60f) {
             val ratio = (targetSilentThreshold - rmsDb) / (targetSilentThreshold - (-60f))
             ratio * maxGainCompensation
         } else {
             0f
         }
 
-        val finalMakeupGain = currentMakeupGainDb + adaptiveGain
+        // Suavizar los cambios de ganancia con un seguidor de envolvente (coeficiente alfa = 0.1)
+        val alpha = 0.1f
+        smoothedAdaptiveGain = (1f - alpha) * smoothedAdaptiveGain + alpha * targetAdaptiveGain
 
+        // Throttling: Evitar reconfigurar el hardware de audio en cada frame (10ms)
+        // Solo enviamos la actualización al chip DSP si han pasado más de 100ms
+        // o si la ganancia suavizada difiere de la última ganancia aplicada por más de 0.5 dB.
+        val currentTimeMs = System.currentTimeMillis()
+        val timeDiffMs = currentTimeMs - lastGainUpdateTimeMs
+        val gainDiffDb = Math.abs(smoothedAdaptiveGain - lastAppliedGain)
+
+        if (timeDiffMs > 100 || gainDiffDb > 0.5f) {
+            val finalMakeupGain = currentMakeupGainDb + smoothedAdaptiveGain
+            try {
+                for (channel in 0..1) {
+                    val currentLimiter = dp.getLimiterByChannelIndex(channel)
+                    currentLimiter.postGain = finalMakeupGain
+                    dp.setLimiterByChannelIndex(channel, currentLimiter)
+                }
+                lastAppliedGain = smoothedAdaptiveGain
+                lastGainUpdateTimeMs = currentTimeMs
+            } catch (e: Exception) {
+                // Silenciar excepciones del hardware en caliente
+            }
+        }
+    }
+
+    private fun resetToDefaultMakeupGain() {
+        val dp = dynamicsProcessing ?: return
         try {
             for (channel in 0..1) {
                 val currentLimiter = dp.getLimiterByChannelIndex(channel)
-                currentLimiter.postGain = finalMakeupGain
+                currentLimiter.postGain = currentMakeupGainDb
                 dp.setLimiterByChannelIndex(channel, currentLimiter)
             }
+            lastAppliedGain = 0f
         } catch (e: Exception) {
-            // Silenciar excepciones por actualización masiva en caliente
+            // Ignorar
         }
     }
 
@@ -253,21 +350,29 @@ class UALUserService : IUALUserService.Stub() {
     private fun runDosimetryCalculation() {
         if (dynamicsProcessing == null) return
 
-        val currentEffectiveOutputDb = currentThresholdDb + currentMakeupGainDb
+        // Innovación 3: Dosimetría basada en RMS real medido
+        // Usamos lastMeasuredRmsDb (que reporta -100dB si la música está pausada o en silencio).
+        val rmsLevel = lastMeasuredRmsDb
 
-        if (currentEffectiveOutputDb > -15f) {
-            val excessDb = currentEffectiveOutputDb - (-15f)
+        // Estimación de dosis de ruido (Umbral seguro estimado digital en -20 dBFS)
+        if (rmsLevel > -20f) {
+            val excessDb = rmsLevel - (-20f)
+            // Incremento exponencial de dosis: a mayor volumen por encima del límite, mayor daño acumulado
             accumulatedDose += (1.0f + (excessDb * 0.2f))
         } else {
+            // Tasa de recuperación: si está en silencio o por debajo de -20dBFS, el oído descansa
             accumulatedDose = (accumulatedDose - 0.5f).coerceAtLeast(0.0f)
         }
 
+        // Si la dosis excede el umbral de fatiga acústica, reducimos asintóticamente el Threshold
         if (accumulatedDose > maxDoseThreshold) {
             val overloadRatio = (accumulatedDose - maxDoseThreshold) / maxDoseThreshold
+            // La atenuación crece asintóticamente hacia un máximo de 6dB de reducción
             dosimetryThresholdAttenuation = (6.0f * (1.0f - Math.exp(-overloadRatio.toDouble()).toFloat()))
             applyDynamicsConfig()
         } else {
             if (dosimetryThresholdAttenuation > 0f) {
+                // Recuperar el umbral original poco a poco
                 dosimetryThresholdAttenuation = (dosimetryThresholdAttenuation - 0.1f).coerceAtLeast(0f)
                 applyDynamicsConfig()
             }

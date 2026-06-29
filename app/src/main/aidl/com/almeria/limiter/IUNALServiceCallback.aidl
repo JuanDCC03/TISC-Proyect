@@ -1,6 +1,6 @@
 package com.almeria.limiter;
 
-interface IUALServiceCallback {
+interface IUNALServiceCallback {
     void onRmsUpdated(float rmsDb);
     void onGainReductionUpdated(float reductionDb);
     void onDoseUpdated(float dosePercentage);
