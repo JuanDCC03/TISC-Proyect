@@ -470,3 +470,22 @@ fun RowScope.VumeterBar(label: String, value: Float, color: Color) {
         }
     }
 }
+
+@Composable
+fun StatusCard(title: String, status: String, color: Color) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .padding(16.dp)
+                .fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(text = title, style = MaterialTheme.typography.bodyLarge)
+            Text(text = status, color = color, style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
