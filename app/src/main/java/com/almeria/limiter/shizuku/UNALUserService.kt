@@ -63,6 +63,10 @@ class UNALUserService : IUNALUserService.Stub() {
     @Volatile private var smoothedAdaptiveGain = 0f
     @Volatile private var lastAppliedGain = 0f
     @Volatile private var lastGainUpdateTimeMs = 0L
+    // Valores de Attack y Release con los que se construyó el DynamicsProcessing actual.
+    // Si cambian, hay que reconstruir el objeto nativo desde cero.
+    @Volatile private var lastBuiltAttackMs = -1f
+    @Volatile private var lastBuiltReleaseMs = -1f
 
     init {
         Log.d(TAG, "UNALUserService instanciado con privilegios: UID=${android.os.Process.myUid()}")
@@ -108,17 +112,10 @@ class UNALUserService : IUNALUserService.Stub() {
 
         Log.d(TAG, "Parámetros actualizados: Thr=$threshold, Att=$attack, Rel=$release, MakeUp=$makeupGain, Adaptive=$adaptiveGain, Dosimeter=$dosimeterEnabled")
 
-        // CONTROL DE BYPASS: Si el limitador está "encendido" en la UI, aplicamos y habilitamos.
-        // Poden usar la variable 'dosimeterEnabled' o añadir una nueva variable 'isLimiterEnabled' al AIDL.
-        // Como prueba rápida, si 'dosimeterEnabled' está en true, encendemos el chip; si no, lo apagamos:
-        dynamicsProcessing?.let { dp ->
-            dp.enabled = dosimeterEnabled // Desactiva por completo el procesamiento de hardware si es false
-            if (dp.enabled) {
-                applyDynamicsConfig()
-            } else {
-                Log.d(TAG, "FILTER BYPASS: El procesador de audio ha sido desactivado para comparación.")
-            }
-        }
+        // El limitador siempre debe estar activo mientras el servicio esté corriendo.
+        // El dosímetro es solo un módulo de medición, no controla el bypass del limitador.
+        dynamicsProcessing?.enabled = true
+        applyDynamicsConfig()
     }
 
     override fun registerCallback(cb: IUNALServiceCallback?) {
@@ -143,50 +140,68 @@ class UNALUserService : IUNALUserService.Stub() {
 
     private fun initDynamicsProcessing() {
         val configBuilder = DynamicsProcessing.Config.Builder(
-            DynamicsProcessing.VARIANT_FAVOR_TIME_RESOLUTION, // <-- Resolución temporal ultra-rápida
+            DynamicsProcessing.VARIANT_FAVOR_TIME_RESOLUTION,
             2,
             false, 0, // preEQ desactivado
             false, 0, // MBC desactivado
             false, 0, // postEQ desactivado
             true      // Limiter activado
         )
-
         val config = configBuilder.build()
-
-        // Asignamos a la sesión 0 (global del sistema) y prioridad 1000
         dynamicsProcessing = DynamicsProcessing(1000, 0, config)
 
-        applyDynamicsConfig()
+        // Registrar los valores de Attack y Release con los que se construyó este objeto.
+        // Si el usuario cambia alguno de estos dos, habrá que reconstruir.
+        lastBuiltAttackMs = currentAttackMs
+        lastBuiltReleaseMs = currentReleaseMs
+
+        applyLimiterParams()
         dynamicsProcessing?.enabled = true
-        Log.d(TAG, "DynamicsProcessing creado (Modo Tiempo Real Bruto) en la Sesión 0")
+        Log.d(TAG, "DynamicsProcessing construido en Sesión 0: Attack=${currentAttackMs}ms, Release=${currentReleaseMs}ms")
     }
 
     private fun applyDynamicsConfig() {
+        // Attack y Release se incrustan en la configuración nativa del objeto DynamicsProcessing
+        // en el momento de su construcción. Si cambian, hay que destruir y reconstruir el motor.
+        if (currentAttackMs != lastBuiltAttackMs || currentReleaseMs != lastBuiltReleaseMs) {
+            Log.d(TAG, "Attack/Release modificado (${lastBuiltAttackMs}→${currentAttackMs}ms / ${lastBuiltReleaseMs}→${currentReleaseMs}ms). Reconstruyendo motor DSP...")
+            try {
+                dynamicsProcessing?.enabled = false
+                dynamicsProcessing?.release()
+                dynamicsProcessing = null
+            } catch (e: Exception) {
+                Log.e(TAG, "Error liberando DP antiguo: ${e.message}")
+            }
+            initDynamicsProcessing() // Reconstruye con los valores nuevos y llama applyLimiterParams()
+            return
+        }
+        // Threshold y Makeup Gain sí se pueden cambiar en caliente sin reconstruir.
+        applyLimiterParams()
+    }
+
+    private fun applyLimiterParams() {
         val dp = dynamicsProcessing ?: return
 
-        // 1. Calculamos el umbral adaptativo inteligente según el volumen físico actual del cel
-        val umbralBaseInmutable = calcularThresholdSeguro()
+        // Usar el Threshold del slider del usuario directamente.
+        // El dosímetro aplica atenuación adicional encima si detecta fatiga auditiva acumulada.
+        val effectiveThreshold = currentThresholdDb - dosimetryThresholdAttenuation
 
-        // 2. Le restamos la atenuación acumulada del dosímetro si el usuario lleva mucho tiempo expuesto
-        val effectiveThreshold = umbralBaseInmutable - dosimetryThresholdAttenuation
-
-        // 3. Construimos la etapa de limitación para canal estéreo con efecto Muro Estricto (Ratio 50.0f)
         val limiterConfig = DynamicsProcessing.Limiter(
             true,               // inUse
             true,               // enabled
             0,                  // linkGroup
             currentAttackMs,    // attackTime (ms)
             currentReleaseMs,   // releaseTime (ms)
-            50.0f,              // Ratio ultra-alto: Ahora actúa como un Brickwall Limiter real
-            effectiveThreshold, // Umbral adaptativo corregido (dB)
+            50.0f,              // Ratio brickwall (muro estricto)
+            effectiveThreshold, // Umbral del slider + corrección por dosímetro
             currentMakeupGainDb // postGain (makeup gain base)
         )
 
         try {
             dp.setLimiterAllChannelsTo(limiterConfig)
-            Log.d(TAG, "Configuración del Limitador aplicada con Ratio de Muro: LimiterThreshold=$effectiveThreshold dB")
+            Log.d(TAG, "Limitador aplicado: Thr=$effectiveThreshold dB, Att=${currentAttackMs}ms, Rel=${currentReleaseMs}ms, PostGain=${currentMakeupGainDb}dB")
         } catch (e: Exception) {
-            Log.e(TAG, "Error al configurar los canales del limitador: ${e.message}")
+            Log.e(TAG, "Error aplicando parámetros al limitador: ${e.message}")
         }
     }
 
