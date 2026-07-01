@@ -5,7 +5,7 @@ import com.almeria.limiter.IUNALServiceCallback;
 interface IUNALUserService {
     void startEngine();
     void stopEngine();
-    void updateParameters(float threshold, float attack, float release, float makeupGain, boolean adaptiveGain, boolean dosimeterEnabled);
+    void updateParameters(float threshold, float attack, float release, float makeupGain, boolean adaptiveGain, boolean dosimeterEnabled, float lowGain, float midGain, float highGain);
     void registerCallback(IUNALServiceCallback callback);
     void exit();
     void onFftUpdated(in float[] frequencies);

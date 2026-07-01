@@ -38,6 +38,9 @@ class UNALForegroundService : Service() {
     private var userMakeupGain = 0f
     private var isAdaptiveGainEnabled = false
     private var isDosimeterEnabled = false
+    private var userLowEq = 0f
+    private var userMidEq = 0f
+    private var userHighEq = 0f
 
     interface TelemetryListener {
         fun onRmsUpdated(rmsDb: Float)
@@ -132,7 +135,10 @@ class UNALForegroundService : Service() {
         release: Float,
         makeupGain: Float,
         adaptiveGain: Boolean,
-        dosimeterEnabled: Boolean
+        dosimeterEnabled: Boolean,
+        lowEq: Float,
+        midEq: Float,
+        highEq: Float
     ) {
         userThreshold = threshold
         userAttack = attack
@@ -140,6 +146,9 @@ class UNALForegroundService : Service() {
         userMakeupGain = makeupGain
         isAdaptiveGainEnabled = adaptiveGain
         isDosimeterEnabled = dosimeterEnabled
+        userLowEq = lowEq
+        userMidEq = midEq
+        userHighEq = highEq
 
         if (ContextManager.activeProfile.value == AudioProfileType.GENERAL) {
             applyCurrentParameters()
@@ -182,6 +191,10 @@ class UNALForegroundService : Service() {
             LimiterParameters.getParametersFor(profile)
         }
 
+        val lowEq = if (profile == AudioProfileType.GENERAL) userLowEq else 0f
+        val midEq = if (profile == AudioProfileType.GENERAL) userMidEq else 0f
+        val highEq = if (profile == AudioProfileType.GENERAL) userHighEq else 0f
+
         try {
             service.updateParameters(
                 params.thresholdDb,
@@ -189,9 +202,12 @@ class UNALForegroundService : Service() {
                 params.releaseMs,
                 params.makeupGainDb,
                 isAdaptiveGainEnabled,
-                isDosimeterEnabled
+                isDosimeterEnabled,
+                lowEq,
+                midEq,
+                highEq
             )
-            Log.d(TAG, "Parámetros aplicados al motor: Profile=$profile, Thr=${params.thresholdDb}dB, Att=${params.attackMs}ms")
+            Log.d(TAG, "Parámetros aplicados al motor: Profile=$profile, Thr=${params.thresholdDb}dB, Att=${params.attackMs}ms, EQ: Low=$lowEq, Mid=$midEq, High=$highEq")
         } catch (e: Exception) {
             Log.e(TAG, "Error al enviar parámetros al motor Shizuku: ${e.message}")
         }

@@ -95,12 +95,11 @@ class MainActivity : ComponentActivity() {
                     UNALHomeScreen(
                         isBound = isServiceBound,
                         rmsValue = rmsValue,
-                        doseValue = doseValue,
                         activeProfile = currentProfile,
                         onStartService = { startAndBindForegroundService() },
                         onStopService = { stopAndUnbindForegroundService() },
-                        onUpdateParams = { thr, att, rel, makeup, adapt, dose ->
-                            unalForegroundService?.updateCustomParameters(thr, att, rel, makeup, adapt, dose)
+                        onUpdateParams = { thr, att, rel, makeup, adapt, dose, low, mid, high ->
+                            unalForegroundService?.updateCustomParameters(thr, att, rel, makeup, adapt, dose, low, mid, high)
                         }
                     )
                 }
@@ -152,11 +151,10 @@ class MainActivity : ComponentActivity() {
 fun UNALHomeScreen(
     isBound: Boolean,
     rmsValue: Float,
-    doseValue: Float,
     activeProfile: AudioProfileType,
     onStartService: () -> Unit,
     onStopService: () -> Unit,
-    onUpdateParams: (Float, Float, Float, Float, Boolean, Boolean) -> Unit
+    onUpdateParams: (Float, Float, Float, Float, Boolean, Boolean, Float, Float, Float) -> Unit
 ) {
     var isShizukuAvailable by remember { mutableStateOf(ShizukuManager.isShizukuAvailable()) }
     var hasPermission by remember { mutableStateOf(ShizukuManager.hasPermission()) }
@@ -168,6 +166,9 @@ fun UNALHomeScreen(
     var makeupGainSlider by remember { mutableFloatStateOf(0f) }
     var isAdaptiveGainEnabled by remember { mutableStateOf(false) }
     var isDosimeterEnabled by remember { mutableStateOf(false) }
+    var lowEqSlider by remember { mutableFloatStateOf(0f) }
+    var midEqSlider by remember { mutableFloatStateOf(0f) }
+    var highEqSlider by remember { mutableFloatStateOf(0f) }
 
     // Trigger update parameter event to service when sliders change
     val updateLimiterParams = {
@@ -177,7 +178,10 @@ fun UNALHomeScreen(
             releaseSlider,
             makeupGainSlider,
             isAdaptiveGainEnabled,
-            isDosimeterEnabled
+            isDosimeterEnabled,
+            lowEqSlider,
+            midEqSlider,
+            highEqSlider
         )
     }
 
@@ -294,7 +298,6 @@ fun UNALHomeScreen(
             
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(text = "Nivel RMS: $displayRms dBFS", style = MaterialTheme.typography.titleSmall)
-                Text(text = "Dosis Acústica: ${"%.1f".format(doseValue)}%", style = MaterialTheme.typography.titleSmall)
             }
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -346,32 +349,40 @@ fun UNALHomeScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Switches
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(text = "Compensación Ganancia (Adaptativa)", style = MaterialTheme.typography.bodyMedium)
-                Switch(
-                    checked = isAdaptiveGainEnabled,
-                    onCheckedChange = { isAdaptiveGainEnabled = it; updateLimiterParams() }
-                )
-            }
+            Text(
+                text = "Ecualizador de Frecuencias (Pre-EQ)",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.align(Alignment.Start)
+            )
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(text = "Dosímetro de Fatiga Auditiva", style = MaterialTheme.typography.bodyMedium)
-                Switch(
-                    checked = isDosimeterEnabled,
-                    onCheckedChange = { isDosimeterEnabled = it; updateLimiterParams() }
-                )
-            }
+            // Low Eq Slider (Bass)
+            Text(text = "Bajos (Bass): ${"%.1f".format(lowEqSlider)} dB", style = MaterialTheme.typography.bodySmall, modifier = Modifier.align(Alignment.Start))
+            Slider(
+                value = lowEqSlider,
+                onValueChange = { lowEqSlider = it; updateLimiterParams() },
+                valueRange = -15f..15f,
+                enabled = activeProfile == AudioProfileType.GENERAL
+            )
+
+            // Mid Eq Slider (Mids)
+            Text(text = "Medios (Mids): ${"%.1f".format(midEqSlider)} dB", style = MaterialTheme.typography.bodySmall, modifier = Modifier.align(Alignment.Start))
+            Slider(
+                value = midEqSlider,
+                onValueChange = { midEqSlider = it; updateLimiterParams() },
+                valueRange = -15f..15f,
+                enabled = activeProfile == AudioProfileType.GENERAL
+            )
+
+            // High Eq Slider (Treble)
+            Text(text = "Altos (Treble): ${"%.1f".format(highEqSlider)} dB", style = MaterialTheme.typography.bodySmall, modifier = Modifier.align(Alignment.Start))
+            Slider(
+                value = highEqSlider,
+                onValueChange = { highEqSlider = it; updateLimiterParams() },
+                valueRange = -15f..15f,
+                enabled = activeProfile == AudioProfileType.GENERAL
+            )
         }
     }
 }

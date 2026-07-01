@@ -1,6 +1,8 @@
 package com.almeria.limiter.shizuku
 
 import android.content.Context
+import android.media.AudioFormat
+import android.media.AudioTrack
 import android.media.audiofx.DynamicsProcessing
 import android.media.audiofx.Visualizer
 import android.media.AudioManager
@@ -16,6 +18,7 @@ import kotlin.math.sqrt
 class UNALUserService : IUNALUserService.Stub() {
 
     private lateinit var audioManager: AudioManager
+    private var silentTrack: AudioTrack? = null
 
     private val TAG = "UNALUserService"
 
@@ -53,6 +56,9 @@ class UNALUserService : IUNALUserService.Stub() {
     @Volatile private var currentMakeupGainDb = 0f
     @Volatile private var isAdaptiveGainEnabled = false
     @Volatile private var isDosimeterEnabled = false
+    @Volatile private var currentLowGainDb = 0f
+    @Volatile private var currentMidGainDb = 0f
+    @Volatile private var currentHighGainDb = 0f
 
     // Estado del Dosímetro y telemetría en tiempo real
     private var accumulatedDose = 0.0f
@@ -82,10 +88,21 @@ class UNALUserService : IUNALUserService.Stub() {
                 .invoke(null) as Context
             audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
-            initDynamicsProcessing()
-            initVisualizer()
+            // Intentamos inicializar componentes de forma independiente para que el fallo de uno no bloquee al otro
+            try {
+                initDynamicsProcessing()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error crítico al inicializar DynamicsProcessing (Session 0): ${e.message}", e)
+            }
+
+            try {
+                initVisualizer()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error crítico al inicializar Visualizer (Session 0): ${e.message}", e)
+            }
+            
         } catch (e: Exception) {
-            Log.e(TAG, "Error al inicializar el motor de audio: ${e.message}", e)
+            Log.e(TAG, "Error general al arrancar el motor de audio: ${e.message}", e)
             throw e
         }
     }
@@ -101,7 +118,10 @@ class UNALUserService : IUNALUserService.Stub() {
         release: Float,
         makeupGain: Float,
         adaptiveGain: Boolean,
-        dosimeterEnabled: Boolean
+        dosimeterEnabled: Boolean,
+        lowGain: Float,
+        midGain: Float,
+        highGain: Float
     ) {
         currentThresholdDb = threshold
         currentAttackMs = attack
@@ -109,8 +129,11 @@ class UNALUserService : IUNALUserService.Stub() {
         currentMakeupGainDb = makeupGain
         isAdaptiveGainEnabled = adaptiveGain
         isDosimeterEnabled = dosimeterEnabled
+        currentLowGainDb = lowGain
+        currentMidGainDb = midGain
+        currentHighGainDb = highGain
 
-        Log.d(TAG, "Parámetros actualizados: Thr=$threshold, Att=$attack, Rel=$release, MakeUp=$makeupGain, Adaptive=$adaptiveGain, Dosimeter=$dosimeterEnabled")
+        Log.d(TAG, "Parámetros actualizados: Thr=$threshold, Att=$attack, Rel=$release, MakeUp=$makeupGain, Adaptive=$adaptiveGain, Dosimeter=$dosimeterEnabled, Low=$lowGain, Mid=$midGain, High=$highGain")
 
         // El limitador siempre debe estar activo mientras el servicio esté corriendo.
         // El dosímetro es solo un módulo de medición, no controla el bypass del limitador.
@@ -142,11 +165,22 @@ class UNALUserService : IUNALUserService.Stub() {
         val configBuilder = DynamicsProcessing.Config.Builder(
             DynamicsProcessing.VARIANT_FAVOR_TIME_RESOLUTION,
             2,
-            false, 0, // preEQ desactivado
+            true, 3,  // preEQ activado con 3 bandas
             false, 0, // MBC desactivado
             false, 0, // postEQ desactivado
             true      // Limiter activado
         )
+
+        // Configurar las 3 bandas del preEQ
+        val eq = DynamicsProcessing.Eq(true, true, 3)
+        val eqBandLow = DynamicsProcessing.EqBand(true, 200f, currentLowGainDb)
+        val eqBandMid = DynamicsProcessing.EqBand(true, 2000f, currentMidGainDb)
+        val eqBandHigh = DynamicsProcessing.EqBand(true, 20000f, currentHighGainDb)
+        eq.setBand(0, eqBandLow)
+        eq.setBand(1, eqBandMid)
+        eq.setBand(2, eqBandHigh)
+        configBuilder.setPreEqAllChannelsTo(eq)
+
         val config = configBuilder.build()
         dynamicsProcessing = DynamicsProcessing(1000, 0, config)
 
@@ -157,7 +191,7 @@ class UNALUserService : IUNALUserService.Stub() {
 
         applyLimiterParams()
         dynamicsProcessing?.enabled = true
-        Log.d(TAG, "DynamicsProcessing construido en Sesión 0: Attack=${currentAttackMs}ms, Release=${currentReleaseMs}ms")
+        Log.d(TAG, "DynamicsProcessing construido en Sesión 0: Attack=${currentAttackMs}ms, Release=${currentReleaseMs}ms, EQ: Low=$currentLowGainDb, Mid=$currentMidGainDb, High=$currentHighGainDb")
     }
 
     private fun applyDynamicsConfig() {
@@ -175,8 +209,25 @@ class UNALUserService : IUNALUserService.Stub() {
             initDynamicsProcessing() // Reconstruye con los valores nuevos y llama applyLimiterParams()
             return
         }
-        // Threshold y Makeup Gain sí se pueden cambiar en caliente sin reconstruir.
+        // Threshold, Makeup Gain y EQ sí se pueden cambiar en caliente sin reconstruir.
         applyLimiterParams()
+        applyEqParams()
+    }
+
+    private fun applyEqParams() {
+        val dp = dynamicsProcessing ?: return
+        try {
+            val eqBandLow = DynamicsProcessing.EqBand(true, 200f, currentLowGainDb)
+            val eqBandMid = DynamicsProcessing.EqBand(true, 2000f, currentMidGainDb)
+            val eqBandHigh = DynamicsProcessing.EqBand(true, 20000f, currentHighGainDb)
+
+            dp.setPreEqBandAllChannelsTo(0, eqBandLow)
+            dp.setPreEqBandAllChannelsTo(1, eqBandMid)
+            dp.setPreEqBandAllChannelsTo(2, eqBandHigh)
+            Log.d(TAG, "PreEQ aplicado: Low=$currentLowGainDb dB, Mid=$currentMidGainDb dB, High=$currentHighGainDb dB")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error aplicando parámetros al PreEQ: ${e.message}")
+        }
     }
 
     private fun applyLimiterParams() {
@@ -207,37 +258,49 @@ class UNALUserService : IUNALUserService.Stub() {
 
     private fun initVisualizer() {
         try {
-            visualizer = Visualizer(0).apply {
-                // Modificado a rango máximo (ej. 1024) para dar suficiente resolución a la FFT
-                captureSize = Visualizer.getCaptureSizeRange()[1]
+            // Hack para "despertar" el Visualizer global en algunos dispositivos: 
+            // Crear y reproducir un AudioTrack en silencio en el mismo proceso.
+            startSilentTrack()
 
-                setDataCaptureListener(object : Visualizer.OnDataCaptureListener {
-                    override fun onWaveFormDataCapture(
-                        v: Visualizer?,
-                        waveform: ByteArray?,
-                        samplingRate: Int
-                    ) {
-                        if (waveform != null) {
-                            processAudioSamples(waveform)
-                        }
+            // En Android 10+ (API 29+), Visualizer(0) es restrictivo. 
+            // Intentamos asegurarnos de que el objeto se crea correctamente.
+            val v = Visualizer(0)
+            
+            // Reducimos el tamaño de captura si el máximo da problemas en algunos dispositivos
+            val range = Visualizer.getCaptureSizeRange()
+            v.captureSize = if (range.size > 1) range[1].coerceAtMost(1024) else 1024
+
+            val result = v.setDataCaptureListener(object : Visualizer.OnDataCaptureListener {
+                override fun onWaveFormDataCapture(
+                    v: Visualizer?,
+                    waveform: ByteArray?,
+                    samplingRate: Int
+                ) {
+                    if (waveform != null) {
+                        processAudioSamples(waveform)
                     }
+                }
 
-                    override fun onFftDataCapture(
-                        v: Visualizer?,
-                        fft: ByteArray?,
-                        samplingRate: Int
-                    ) {
-                        if (fft != null) {
-                            processFftSamples(fft)
-                        }
+                override fun onFftDataCapture(
+                    v: Visualizer?,
+                    fft: ByteArray?,
+                    samplingRate: Int
+                ) {
+                    if (fft != null) {
+                        processFftSamples(fft)
                     }
-                }, Visualizer.getMaxCaptureRate() / 2, true, true) // Habilitados Waveform y FFT (true, true)
+                }
+            }, Visualizer.getMaxCaptureRate() / 2, true, true)
 
-                enabled = true
+            if (result != Visualizer.SUCCESS) {
+                Log.e(TAG, "Error al configurar el Listener del Visualizer: Código $result")
             }
-            Log.d(TAG, "Visualizer iniciado exitosamente en la Sesión 0 (Waveform + FFT)")
+
+            v.enabled = true
+            visualizer = v
+            Log.d(TAG, "Visualizer iniciado exitosamente en la Sesión 0. Enabled=${v.enabled}, Size=${v.captureSize}")
         } catch (e: Exception) {
-            Log.e(TAG, "Error al inicializar el Visualizer global: ${e.message}")
+            Log.e(TAG, "Error al inicializar el Visualizer global: ${e.message}", e)
         }
     }
 
@@ -386,7 +449,30 @@ class UNALUserService : IUNALUserService.Stub() {
         }
     }
 
+    private fun startSilentTrack() {
+        try {
+            if (silentTrack == null) {
+                val minSize = AudioTrack.getMinBufferSize(44100, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_8BIT)
+                silentTrack = AudioTrack(
+                    AudioManager.STREAM_MUSIC, 44100, AudioFormat.CHANNEL_OUT_MONO,
+                    AudioFormat.ENCODING_PCM_8BIT, minSize, AudioTrack.MODE_STREAM
+                )
+                silentTrack?.play()
+                Log.d(TAG, "Silent AudioTrack iniciado para mantener sesión de audio activa")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "No se pudo iniciar el track de silencio: ${e.message}")
+        }
+    }
+
     private fun releaseResources() {
+        try {
+            silentTrack?.stop()
+            silentTrack?.release()
+            silentTrack = null
+        } catch (e: Exception) {
+            // Ignorar
+        }
         try {
             visualizer?.enabled = false
             visualizer?.release()
